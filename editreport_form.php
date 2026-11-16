@@ -105,14 +105,17 @@ class report_edit_form extends moodleform {
         $mform->setDefault('cron', 0);
         $mform->disabledIf('cron', 'type', 'neq', 'sql');
 
-        $mform->addElement(
-            'checkbox',
-            'remote',
-            get_string('remote', 'block_configurable_reports'),
-            get_string('remotedescription', 'block_configurable_reports')
-        );
-        $mform->addHelpButton('remote', 'remote', 'block_configurable_reports');
-        $mform->setDefault('remote', 0);
+        if (block_configurable_reports_can_managesqlreports($this->_customdata['context'])) {
+            $mform->addElement(
+                'checkbox',
+                'remote',
+                get_string('remote', 'block_configurable_reports'),
+                get_string('remotedescription', 'block_configurable_reports')
+            );
+            $mform->addHelpButton('remote', 'remote', 'block_configurable_reports');
+            $mform->setDefault('remote', 0);
+            $mform->disabledIf('remote', 'type', 'neq', 'sql');
+        }
 
         // Adds an embed link for easy copy/paste once the report is saved.
         if (isset($this->_customdata['report']->id) && $this->_customdata['report']->id) {

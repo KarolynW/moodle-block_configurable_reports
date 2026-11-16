@@ -89,7 +89,9 @@ $string['cron_help'] = 'Schedule this query to run each day (At night)';
 $string['errorremotereport'] = 'The repository did not return a report for that name.';
 $string['remote'] = 'Run on remote db';
 $string['remotedescription'] = 'Do you want to run this query on the remote db';
-$string['remote_help'] = 'Do you want to run this query on the remote db';
+$string['remote_help'] = 'Use the remote database configured by the site administrator. This is only available to fully ' .
+    'trusted SQL report managers.';
+$string['remotedatabaseunavailable'] = 'The remote reporting database is unavailable. The query was not run locally.';
 $string['setcourseid'] = 'Set courseid';
 
 // Columns.
@@ -505,10 +507,13 @@ $string['sendemail'] = 'Send email';
 $string['taskruncronreports'] = 'Run the SQL reports scheduled to run daily';
 
 $string['sqlsecurity'] = 'SQL Security';
-$string['sqlsecurityinfo'] = 'Disable for executing SQL queries with statements for inserting data';
+$string['sqlsecurityinfo'] = 'Keep enabled unless the SQL report managers are fully trusted database administrators. ' .
+    'The query checks are defence in depth and cannot make arbitrary SQL safe. Disabling this setting additionally permits ' .
+    'INSERT and CREATE when SQL execution is enabled in config.php.';
 $string['allowedsqlusers'] = 'SQL report users';
-$string['allowedsqlusersinfo'] =
-    'If you wish to only allow certain admin users to manage sql reports, add a list of usernames separated by commas. They must also have the block/configurable_reports:managesqlreports capability.';
+$string['allowedsqlusersinfo'] = 'Only fully trusted database administrators should manage SQL reports. Restrict them further by ' .
+    'adding a comma-separated list of administrator usernames. They must also have the ' .
+    'block/configurable_reports:managesqlreports capability.';
 $string['global'] = 'Global report';
 $string['enableglobal'] = 'This is a global report (accessible from any course)';
 $string['global_help'] =

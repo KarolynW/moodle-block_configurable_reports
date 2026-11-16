@@ -131,18 +131,30 @@ abstract class report_base {
         $this->currentcourseid = $this->config->courseid;
         $this->init();
 
-        // Use a custom $DB (and not current system's $DB)
-        // TODO: major security issue.
+        // Remote databases expose a separate data boundary. Only honour the flag while the report owner remains one of
+        // the explicitly trusted SQL report managers; ordinary viewers can still view the report's permitted output.
         $remotedbhost = get_config('block_configurable_reports', 'dbhost');
         $remotedbname = get_config('block_configurable_reports', 'dbname');
         $remotedbuser = get_config('block_configurable_reports', 'dbuser');
         $remotedbpass = get_config('block_configurable_reports', 'dbpass');
 
-        if (!empty($remotedbhost) && !empty($remotedbname) && !empty($remotedbuser) && !empty($remotedbpass) &&
-            $this->config->remote) {
-            $dbclass = get_class($DB);
-            $remotedb = new $dbclass();
-            $remotedb->connect($remotedbhost, $remotedbuser, $remotedbpass, $remotedbname, $CFG->prefix);
+        if (
+            !empty($remotedbhost) && !empty($remotedbname) && !empty($remotedbuser) && !empty($remotedbpass) &&
+            ($this->config->type ?? '') === 'sql' && !empty($this->config->remote)
+        ) {
+            $context = ((int) $this->config->courseid === SITEID) ? context_system::instance() :
+                context_course::instance($this->config->courseid, IGNORE_MISSING);
+            $trustedowner = $context && block_configurable_reports_user_can_managesqlreports(
+                (int) ($this->config->ownerid ?? 0),
+                $context
+            );
+            if ($trustedowner) {
+                $dbclass = get_class($DB);
+                $remotedb = new $dbclass();
+                $remotedb->connect($remotedbhost, $remotedbuser, $remotedbpass, $remotedbname, $CFG->prefix);
+            } else {
+                $remotedb = $DB;
+            }
         } else {
             $remotedb = $DB;
         }

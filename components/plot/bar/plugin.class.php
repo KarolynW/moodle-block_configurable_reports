@@ -33,6 +33,12 @@ require_once($CFG->dirroot . '/blocks/configurable_reports/plugin.class.php');
  */
 class plugin_bar extends plugin_base {
 
+    /** @var int Largest canvas dimension pChart is allowed to allocate. */
+    private const MAX_DIMENSION = 4000;
+
+    /** @var int Smallest useful canvas dimension. */
+    private const MIN_DIMENSION = 200;
+
     /**
      * Init
      *
@@ -53,6 +59,22 @@ class plugin_bar extends plugin_base {
      */
     public function summary(object $data): string {
         return get_string('barsummary', 'block_configurable_reports');
+    }
+
+    /**
+     * Bound dimensions from stored/imported graph configuration before pChart allocates an image.
+     *
+     * @param object $data Graph configuration.
+     * @return int[] Width and height.
+     */
+    public static function normalise_dimensions(object $data): array {
+        $width = property_exists($data, 'width') ? (int) $data->width : 900;
+        $height = property_exists($data, 'height') ? (int) $data->height : 500;
+
+        return [
+            min(max($width, self::MIN_DIMENSION), self::MAX_DIMENSION),
+            min(max($height, self::MIN_DIMENSION), self::MAX_DIMENSION),
+        ];
     }
 
     /**
@@ -105,10 +127,10 @@ class plugin_bar extends plugin_base {
             }
         }
 
-        $graphdata = urlencode(json_encode($series));
+        $token = cr_store_plot_data((int) $this->report->id, 'bar', $series);
 
         return $CFG->wwwroot . '/blocks/configurable_reports/components/plot/bar/graph.php?reportid=' . $this->report->id . '&id=' .
-            $id . '&graphdata=' . $graphdata . '&courseid='.$this->report->courseid;
+            $id . '&token=' . $token . '&courseid=' . $this->report->courseid;
     }
 
     /**
@@ -117,10 +139,9 @@ class plugin_bar extends plugin_base {
      * @return array
      */
     public function get_series(): array {
-        $graphdataraw = required_param('graphdata', PARAM_RAW);
-        $graphdata = json_decode(urldecode($graphdataraw), false, 512, JSON_THROW_ON_ERROR);
+        $token = required_param('token', PARAM_ALPHANUM);
 
-        return (array) $graphdata;
+        return cr_get_plot_data($token, (int) $this->report->id, 'bar');
     }
 
 }

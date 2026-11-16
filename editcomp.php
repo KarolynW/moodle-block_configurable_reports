@@ -72,9 +72,7 @@ if ($report->type === 'sql' && !block_configurable_reports_can_managesqlreports(
     throw new moodle_exception('nosqlpermissions', 'block_configurable_reports');
 }
 
-require_once($CFG->dirroot . '/blocks/configurable_reports/reports/' . $report->type . '/report.class.php');
-
-$reportclassname = 'report_' . $report->type;
+$reportclassname = cr_require_report_class($report->type);
 $reportclass = new $reportclassname($report->id);
 
 if (!in_array($comp, $reportclass->components)) {

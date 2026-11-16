@@ -52,8 +52,6 @@ class plugin_max extends plugin_base {
      * @return string
      */
     public function summary(object $data): string {
-        global $CFG;
-
         if ($this->report->type !== 'sql') {
             $components = cr_unserialize($this->report->components);
             if (!is_array($components) || empty($components['columns']['elements'])) {
@@ -70,10 +68,7 @@ class plugin_max extends plugin_base {
             }
         } else {
 
-            require_once($CFG->dirroot . '/blocks/configurable_reports/report.class.php');
-            require_once($CFG->dirroot . '/blocks/configurable_reports/reports/' . $this->report->type . '/report.class.php');
-
-            $reportclassname = 'report_' . $this->report->type;
+            $reportclassname = cr_require_report_class($this->report->type);
             $reportclass = new $reportclassname($this->report);
 
             $components = cr_unserialize($this->report->components);

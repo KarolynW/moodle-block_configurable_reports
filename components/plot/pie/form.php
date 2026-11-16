@@ -39,8 +39,6 @@ class pie_form extends moodleform {
      * Form definition
      */
     public function definition(): void {
-        global $CFG;
-
         $mform =& $this->_form;
         $options = [];
 
@@ -61,10 +59,7 @@ class pie_form extends moodleform {
             }
         } else {
 
-            require_once($CFG->dirroot . '/blocks/configurable_reports/report.class.php');
-            require_once($CFG->dirroot . '/blocks/configurable_reports/reports/' . $report->type . '/report.class.php');
-
-            $reportclassname = 'report_' . $report->type;
+            $reportclassname = cr_require_report_class($report->type);
             $reportclass = new $reportclassname($report);
 
             $components = cr_unserialize($report->components);

@@ -41,6 +41,10 @@ require_once($CFG->dirroot . '/blocks/configurable_reports/components/filters/ye
 require_once($CFG->dirroot . '/blocks/configurable_reports/components/columns/userfield/plugin.class.php');
 require_once($CFG->dirroot . '/blocks/configurable_reports/components/conditions/cuserfield/plugin.class.php');
 require_once($CFG->dirroot . '/blocks/configurable_reports/components/conditions/ccoursefield/plugin.class.php');
+require_once($CFG->dirroot . '/blocks/configurable_reports/components/columns/reportcolumn/plugin.class.php');
+require_once($CFG->dirroot . '/blocks/configurable_reports/components/plot/bar/plugin.class.php');
+require_once($CFG->dirroot . '/blocks/configurable_reports/components/plot/line/plugin.class.php');
+require_once($CFG->dirroot . '/blocks/configurable_reports/components/plot/pie/plugin.class.php');
 
 /**
  * Regression tests for the security review findings
@@ -95,6 +99,7 @@ final class security_test extends advanced_testcase {
      *
      * @param string $type
      * @param array $extra Extra report fields.
+     * @param array|null $components Report components, or null for the default SQL component.
      * @return string
      */
     private function build_import_xml(string $type, array $extra = [], ?array $components = null): string {
@@ -187,6 +192,71 @@ final class security_test extends advanced_testcase {
     }
 
     /**
+     * A normal report manager cannot enable the separately configured remote database through an import.
+     */
+    public function test_import_remote_requires_sql_capability(): void {
+        global $DB, $SITE;
+
+        $user = $this->getDataGenerator()->create_user();
+        $roleid = $this->getDataGenerator()->create_role();
+        assign_capability('block/configurable_reports:managereports', CAP_ALLOW, $roleid, \context_system::instance());
+        role_assign($roleid, $user->id, \context_system::instance());
+        $this->setUser($user);
+
+        $this->assertTrue(cr_import_xml($this->build_import_xml('users', ['remote' => 1]), $SITE));
+        $this->assertEquals(0, $DB->get_field('block_configurable_reports', 'remote', []));
+    }
+
+    /**
+     * The remote connection is an SQL-report feature, even for a fully trusted user.
+     */
+    public function test_import_remote_requires_sql_report(): void {
+        global $DB, $SITE;
+
+        $this->setAdminUser();
+        $this->assertTrue(cr_import_xml($this->build_import_xml('users', ['remote' => 1]), $SITE));
+        $this->assertEquals(0, $DB->get_field('block_configurable_reports', 'remote', []));
+    }
+
+    /**
+     * Existing reports do not connect remotely after their owner loses the trusted SQL capability.
+     */
+    public function test_remote_database_requires_trusted_owner(): void {
+        global $DB, $SITE, $remotedb;
+
+        $owner = $this->getDataGenerator()->create_user();
+        set_config('dbhost', '127.0.0.1', 'block_configurable_reports');
+        set_config('dbname', 'database_that_does_not_exist', 'block_configurable_reports');
+        set_config('dbuser', 'nobody', 'block_configurable_reports');
+        set_config('dbpass', 'invalid', 'block_configurable_reports');
+
+        $classname = cr_require_report_class('users');
+        new $classname((object) [
+            'id' => 1,
+            'courseid' => $SITE->id,
+            'ownerid' => $owner->id,
+            'type' => 'users',
+            'components' => cr_serialize([]),
+            'remote' => 1,
+        ]);
+
+        $this->assertSame($DB, $remotedb);
+    }
+
+    /**
+     * Import data is bounded before parsing and components must use valid base64.
+     */
+    public function test_import_rejects_oversized_or_invalid_data(): void {
+        global $DB, $SITE;
+
+        $this->setAdminUser();
+
+        $this->assertFalse(cr_import_xml(str_repeat('x', (1024 * 1024) + 1), $SITE));
+        $this->assertFalse(cr_import_xml($this->build_import_xml('users', ['components' => '%%%']), $SITE));
+        $this->assertFalse($DB->record_exists('block_configurable_reports', []));
+    }
+
+    /**
      * Serialized data cannot instantiate classes other than stdClass.
      */
     public function test_unserialize_only_allows_stdclass(): void {
@@ -195,6 +265,19 @@ final class security_test extends advanced_testcase {
         $result = cr_unserialize($data);
 
         $this->assertNotInstanceOf(\core\task\manager::class, $result['x']);
+    }
+
+    /**
+     * Serialized component data has a nesting limit and malformed input fails closed.
+     */
+    public function test_unserialize_has_nesting_limit(): void {
+        $data = 's:1:"x";';
+        for ($i = 0; $i < 70; $i++) {
+            $data = 'a:1:{i:0;' . $data . '}';
+        }
+
+        $this->assertSame([], cr_unserialize($data));
+        $this->assertSame([], cr_unserialize('not serialized data'));
     }
 
     /**
@@ -285,6 +368,155 @@ final class security_test extends advanced_testcase {
 
         $this->expectException(\moodle_exception::class);
         cr_require_component_plugin('columns', '../conditions/cuserfield');
+    }
+
+    /**
+     * Stored report types cannot be turned into include paths.
+     */
+    public function test_require_report_class_rejects_unknown(): void {
+        $this->assertSame('report_users', cr_require_report_class('users'));
+
+        $this->expectException(\moodle_exception::class);
+        cr_require_report_class('../../sql');
+    }
+
+    /**
+     * Chart data stays out of URLs and can only be read by the user who generated it.
+     */
+    public function test_plot_data_uses_user_bound_token(): void {
+        global $SITE;
+
+        $this->setAdminUser();
+        $report = (object) ['id' => 123, 'courseid' => $SITE->id, 'type' => 'users'];
+        $plugin = new \plugin_bar($report);
+        $data = (object) ['label_field' => '0,Name', 'value_fields' => '1,Value'];
+
+        $url = html_entity_decode($plugin->execute('chart1', $data, [['Sensitive label', 42]]));
+        parse_str((string) parse_url($url, PHP_URL_QUERY), $params);
+
+        $this->assertArrayHasKey('token', $params);
+        $this->assertStringNotContainsString('Sensitive label', $url);
+        $this->assertSame(
+            ['Name' => ['Sensitive label'], 'Value' => [42]],
+            cr_get_plot_data($params['token'], 123, 'bar')
+        );
+
+        $lineurl = html_entity_decode((new \plugin_line($report))->execute('chart2', (object) [
+            'xaxis' => 1,
+            'yaxis' => 2,
+            'serieid' => 1,
+        ], [['Private series', 99]]));
+        parse_str((string) parse_url($lineurl, PHP_URL_QUERY), $lineparams);
+        $this->assertArrayNotHasKey('min', $lineparams);
+        $this->assertArrayNotHasKey('max', $lineparams);
+        $this->assertStringNotContainsString('Private series', $lineurl);
+        $this->assertSame(
+            'Private series',
+            cr_get_plot_data($lineparams['token'], 123, 'line')['series'][0]['name']
+        );
+
+        $pieurl = html_entity_decode((new \plugin_pie($report))->execute('chart3', (object) [
+            'areaname' => 0,
+            'areavalue' => 1,
+            'group' => 0,
+        ], [['Private slice', 7]]));
+        parse_str((string) parse_url($pieurl, PHP_URL_QUERY), $pieparams);
+        $this->assertStringNotContainsString('Private slice', $pieurl);
+        $this->assertSame(
+            [['Private slice'], [7]],
+            cr_get_plot_data($pieparams['token'], 123, 'pie')['series']
+        );
+
+        $this->setUser($this->getDataGenerator()->create_user());
+        $this->expectException(\invalid_parameter_exception::class);
+        cr_get_plot_data($params['token'], 123, 'bar');
+    }
+
+    /**
+     * Export values cannot terminate their XML CDATA section.
+     */
+    public function test_cdata_encoding_preserves_terminator_text(): void {
+        global $CFG;
+
+        $value = 'before]]><injected/>after';
+        $xml = '<value><![CDATA[' . cr_encode_cdata($value) . ']]></value>';
+        if (class_exists('\core\xml_parser')) {
+            $parsed = (new \core\xml_parser())->parse($xml, 1, 'UTF-8');
+        } else {
+            require_once($CFG->dirroot . '/lib/xmlize.php');
+            $parsed = xmlize($xml, 1, 'UTF-8');
+        }
+
+        $this->assertSame($value, $parsed['value']['#']);
+        $this->assertStringNotContainsString(']]><injected', cr_encode_cdata($value));
+    }
+
+    /**
+     * Imported bar chart dimensions cannot trigger unbounded image allocation.
+     */
+    public function test_bar_dimensions_are_bounded(): void {
+        $this->assertSame([900, 500], \plugin_bar::normalise_dimensions(new \stdClass()));
+        $this->assertSame([200, 4000], \plugin_bar::normalise_dimensions((object) [
+            'width' => -1,
+            'height' => PHP_INT_MAX,
+        ]));
+    }
+
+    /**
+     * Mutually embedded user and course reports terminate instead of recursing until resource exhaustion.
+     */
+    public function test_embedded_report_cycle_is_bounded(): void {
+        global $DB, $SITE, $USER;
+
+        $this->setAdminUser();
+        $viewer = $USER;
+        $student = $this->getDataGenerator()->create_user();
+        $course = $this->getDataGenerator()->create_course();
+        $this->getDataGenerator()->enrol_user($student->id, $course->id);
+
+        $base = [
+            'courseid' => $SITE->id,
+            'ownerid' => $viewer->id,
+            'visible' => 1,
+            'summary' => '',
+            'components' => cr_serialize([]),
+            'remote' => 0,
+        ];
+        $usersid = $DB->insert_record('block_configurable_reports', (object) ($base + [
+            'name' => 'Users cycle',
+            'type' => 'users',
+        ]));
+        $coursesid = $DB->insert_record('block_configurable_reports', (object) ($base + [
+            'name' => 'Courses cycle',
+            'type' => 'courses',
+        ]));
+
+        $column = static function (int $reportid): array {
+            return [
+                'id' => 'cycle' . $reportid,
+                'pluginname' => 'reportcolumn',
+                'formdata' => (object) [
+                    'reportid' => $reportid,
+                    'column' => 0,
+                    'columname' => 'Embedded',
+                ],
+            ];
+        };
+        $DB->set_field('block_configurable_reports', 'components', cr_serialize([
+            'columns' => ['elements' => [$column($coursesid)]],
+            'conditions' => ['elements' => []],
+        ]), ['id' => $usersid]);
+        $DB->set_field('block_configurable_reports', 'components', cr_serialize([
+            'columns' => ['elements' => [$column($usersid)]],
+            'conditions' => ['elements' => []],
+        ]), ['id' => $coursesid]);
+
+        $usersreport = $DB->get_record('block_configurable_reports', ['id' => $usersid]);
+        $plugin = new \plugin_reportcolumn($usersreport);
+        $result = $plugin->execute((object) ['reportid' => $coursesid, 'column' => 0], $student, $viewer, $SITE->id);
+
+        $this->assertIsArray($result);
+        $this->assertLessThanOrEqual(1, count($result));
     }
 
     /**

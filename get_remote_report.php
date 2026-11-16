@@ -32,6 +32,7 @@ $context = block_configurable_reports_require_course_login();
 if (!block_configurable_reports_can_managesqlreports($context)) {
     throw new moodle_exception('nosqlpermissions', 'block_configurable_reports');
 }
+require_sesskey();
 $reportname = required_param('reportname', PARAM_PATH);
 
 if (!$userandrepo = get_config('block_configurable_reports', 'sharedsqlrepository')) {

@@ -44,7 +44,7 @@ Feature: Configure the components of a report
       | Name   | City |
     And I press "Add"
     And I click on "Delete" "link" in the "Email" "table_row"
-    Then I should not see "Email"
+    Then "Email" "table_row" should not exist
     When I click on "Move up" "link" in the "City" "table_row"
     Then "City" "text" should appear before "Full name" "text"
     When I follow "View report"

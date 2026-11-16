@@ -51,8 +51,6 @@ class component_calcs extends component_base {
      * @return void
      */
     public function add_form_elements(MoodleQuickForm $mform, $components): void {
-        global $CFG;
-
         $components = cr_unserialize($components);
         $options = [];
 
@@ -79,10 +77,7 @@ class component_calcs extends component_base {
                 $i++;
             }
         } else {
-            require_once($CFG->dirroot . '/blocks/configurable_reports/report.class.php');
-            require_once($CFG->dirroot . '/blocks/configurable_reports/reports/' . $this->config->type . '/report.class.php');
-
-            $reportclassname = 'report_' . $this->config->type;
+            $reportclassname = cr_require_report_class($this->config->type);
             $reportclass = new $reportclassname($this->config);
 
             $components = cr_unserialize($this->config->components);

@@ -118,6 +118,25 @@ SQL;
             'escape string with a newline' => ["SELECT string_agg(username, E'\\n') FROM prefix_user", null, null],
             'escaped semicolon' => ["SELECT E'\\x3b' FROM prefix_user", 'nosemicolon', null],
 
+            // SELECT can still invoke database functions with server-side effects.
+            'postgres sleep' => ['SELECT pg_sleep(30)', 'notallowedwords', 'notallowedwords'],
+            'postgres sleep until' => ['SELECT pg_sleep_until(now())', 'notallowedwords', 'notallowedwords'],
+            'postgres read file' => ["SELECT pg_read_file('/etc/passwd')", 'notallowedwords', 'notallowedwords'],
+            'postgres stat file' => ["SELECT pg_stat_file('/etc/passwd')", 'notallowedwords', 'notallowedwords'],
+            'postgres dblink' => ["SELECT dblink_exec('dbname=x', 'DELETE FROM x')", 'notallowedwords', 'notallowedwords'],
+            'postgres sequence change' => ["SELECT setval('prefix_user_id_seq', 1)", 'notallowedwords', 'notallowedwords'],
+            'postgres try advisory lock' => ['SELECT pg_try_advisory_lock(1)', 'notallowedwords', 'notallowedwords'],
+            'mysql sleep' => ['SELECT SLEEP(30)', 'notallowedwords', 'notallowedwords'],
+            'mysql load file' => ["SELECT LOAD_FILE('/etc/passwd')", 'notallowedwords', 'notallowedwords'],
+            'mysql write file' => ["SELECT 'data' INTO OUTFILE '/tmp/report'", 'notallowedwords', 'notallowedwords'],
+            'sql server openrowset' => ["SELECT * FROM OPENROWSET('provider', 'source', 'query')", 'notallowedwords',
+                'notallowedwords'],
+            'sql server audit file' => ["SELECT * FROM sys.fn_get_audit_file('audit', NULL, NULL)", 'notallowedwords',
+                'notallowedwords'],
+            'oracle network package' => ["SELECT UTL_HTTP.REQUEST('https://example.com') FROM dual", 'notallowedwords',
+                'notallowedwords'],
+            'oracle java package' => ["SELECT DBMS_JAVA.RUNJAVA('x') FROM dual", 'notallowedwords', 'notallowedwords'],
+
             // The query in the report.
             'exploit' => [self::EXPLOIT, 'notallowedwords', 'notallowedwords'],
 
@@ -163,6 +182,95 @@ SQL;
         set_config('sqlsecurity', 1, 'block_configurable_reports');
         $this->assertSame('notallowedwords',
             \report_sql::get_query_security_error('INSERT INTO prefix_table (name) VALUES (1)'));
+    }
+
+    /**
+     * Remote SQL uses the configured reporting connection and never writes through it.
+     */
+    public function test_remote_query_uses_read_only_connection(): void {
+        global $CFG, $DB, $remotedb;
+
+        $this->setAdminUser();
+        set_config('sqlsecurity', 0, 'block_configurable_reports');
+        $CFG->block_configurable_reports_enable_sql_execution = 1;
+
+        $report = new \report_sql($this->create_sql_report('SELECT 1'));
+        $report->config->remote = 1;
+        $remotedb = new class {
+            /** @var bool Whether the remote query method was called. */
+            public bool $called = false;
+
+            /**
+             * Stand-in for a read-only Moodle database connection.
+             *
+             * @param string $sql SQL query.
+             * @param array $params Query parameters.
+             * @param int $limitfrom Offset.
+             * @param int $limitnum Limit.
+             * @return array
+             */
+            public function get_recordset_sql(string $sql, array $params, int $limitfrom, int $limitnum): array {
+                $this->called = true;
+
+                return [];
+            }
+        };
+
+        $report->execute_query('SELECT 1');
+        $this->assertTrue($remotedb->called);
+
+        try {
+            $report->execute_query('INSERT INTO prefix_table (name) VALUES (1)');
+            $this->fail('Exception expected');
+        } catch (\moodle_exception $e) {
+            $this->assertSame('notallowedwords', $e->errorcode);
+        } finally {
+            $remotedb = $DB;
+        }
+    }
+
+    /**
+     * A remote report never falls back to Moodle's local writable database.
+     */
+    public function test_remote_query_fails_closed(): void {
+        global $DB, $remotedb;
+
+        $this->setAdminUser();
+        $report = new \report_sql($this->create_sql_report('SELECT 1'));
+        $report->config->remote = 1;
+        $remotedb = $DB;
+
+        $this->expectException(\moodle_exception::class);
+        $this->expectExceptionMessage(get_string('remotedatabaseunavailable', 'block_configurable_reports'));
+        $report->execute_query('SELECT 1');
+    }
+
+    /**
+     * Revoking the report owner's SQL trust stops saved and scheduled queries from running.
+     */
+    public function test_query_requires_trusted_owner(): void {
+        global $SITE;
+
+        $owner = $this->getDataGenerator()->create_user();
+        $roleid = $this->getDataGenerator()->create_role();
+        $systemcontext = \context_system::instance();
+        assign_capability('block/configurable_reports:managesqlreports', CAP_ALLOW, $roleid, $systemcontext);
+        role_assign($roleid, $owner->id, $systemcontext);
+        $this->setUser($owner);
+
+        $report = new \report_sql($this->create_sql_report('SELECT 1'));
+        $recordset = $report->execute_query('SELECT 1');
+        $recordset->close();
+
+        role_unassign($roleid, $owner->id, $systemcontext->id);
+        $this->setAdminUser();
+
+        try {
+            $report->execute_query('SELECT 1');
+            $this->fail('Exception expected');
+        } catch (\moodle_exception $e) {
+            $this->assertSame('nosqlpermissions', $e->errorcode);
+        }
     }
 
     /**

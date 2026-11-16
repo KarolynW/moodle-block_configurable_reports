@@ -75,7 +75,7 @@ unset($reportdata['id'], $reportdata['courseid'], $reportdata['ownerid']);
 $reportdata['components'] = base64_encode($reportdata['components']);
 
 foreach ($reportdata as $key => $value) {
-    $data .= "<$key><![CDATA[$value]]></$key>\n";
+    $data .= "<$key><![CDATA[" . cr_encode_cdata((string) $value) . "]]></$key>\n";
 }
 
 $data .= "</report>";

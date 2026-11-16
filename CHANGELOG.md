@@ -3,6 +3,14 @@
 All notable changes to the Configurable Reports block, newest first. Entries up to
 4.5.0 were kept in `README.txt`, which this file replaces.
 
+## 5.3.4 (2027050406) for Moodle 4.0 and later
+
+_Unreleased_
+
+### Changed
+
+- Maintenance updates and additional tests.
+
 ## 5.3.3 (2027050405) for Moodle 4.0 and later
 
 _Release date: 10.11.2026_

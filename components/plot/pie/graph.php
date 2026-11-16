@@ -54,10 +54,7 @@ if ((int) $course->id === SITEID) {
     $context = context_course::instance($course->id);
 }
 
-require_once($CFG->dirroot . '/blocks/configurable_reports/report.class.php');
-require_once($CFG->dirroot . '/blocks/configurable_reports/reports/' . $report->type . '/report.class.php');
-
-$reportclassname = 'report_' . $report->type;
+$reportclassname = cr_require_report_class($report->type);
 $reportclass = new $reportclassname($report);
 
 if (!$reportclass->check_permissions($USER->id, $context)) {
@@ -69,17 +66,19 @@ $graphs = $components['plot']['elements'];
 
 if (!empty($graphs)) {
     $series = [];
+    $graphfound = false;
     foreach ($graphs as $g) {
-        $classname = cr_require_component_plugin('plot', $g['pluginname']);
-        if ($g['id'] == $id) {
+        if (($g['pluginname'] ?? '') === 'pie' && ($g['id'] ?? '') == $id) {
+            $classname = cr_require_component_plugin('plot', $g['pluginname']);
             $class = new $classname($report);
             $series = $class->get_series($g['formdata']);
             $colors = $class->get_color_palette($g['formdata']);
+            $graphfound = true;
             break;
         }
     }
 
-    if ($g['id'] == $id) {
+    if ($graphfound) {
 
         require_once($CFG->dirroot . "/blocks/configurable_reports/lib/pChart2/class/pDraw.php");
         require_once($CFG->dirroot . "/blocks/configurable_reports/lib/pChart2/class/pData.php");

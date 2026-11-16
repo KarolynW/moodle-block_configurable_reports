@@ -68,7 +68,7 @@ class plugin_pie extends plugin_base {
         global $CFG;
 
         // Data -> Plugin configuration data.
-        $series = [];
+        $series = [[], []];
         if ($finalreport) {
             foreach ($finalreport as $r) {
                 if ($data->areaname == $data->areavalue) {
@@ -143,12 +143,22 @@ class plugin_pie extends plugin_base {
             $i++;
         }
 
-        $serie0 = base64_encode(strip_tags(implode(',', $serie0sorted)));
-        $serie1 = base64_encode(implode(',', $serie1sorted));
-        $colorpalette = base64_encode(implode(',', $colors));
+        foreach ($colors as $index => $color) {
+            if ($color === '') {
+                unset($colors[$index]);
+            } else {
+                $colors[$index] = array_map('intval', explode('|', $color));
+            }
+        }
+
+        $plotdata = [
+            'series' => [$serie0sorted, $serie1sorted],
+            'colors' => $colors,
+        ];
+        $token = cr_store_plot_data((int) $this->report->id, 'pie', $plotdata);
 
         return $CFG->wwwroot . '/blocks/configurable_reports/components/plot/pie/graph.php?reportid=' . $this->report->id . '&id=' .
-            $id . '&serie0=' . $serie0 . '&serie1=' . $serie1 . '&colorpalette=' . $colorpalette . '&courseid='.$this->report->courseid;
+            $id . '&token=' . $token . '&courseid=' . $this->report->courseid;
     }
 
     /**
@@ -157,32 +167,22 @@ class plugin_pie extends plugin_base {
      * @return array
      */
     public function get_series(): array {
-        $serie0 = required_param('serie0', PARAM_RAW);
-        $serie1 = required_param('serie1', PARAM_RAW);
+        $token = required_param('token', PARAM_ALPHANUM);
+        $data = cr_get_plot_data($token, (int) $this->report->id, 'pie');
 
-        return [explode(',', base64_decode($serie0)), explode(',', base64_decode($serie1))];
+        return $data['series'];
     }
 
     /**
      * get_color_palette
      *
-     * @return array|string[]|null
+     * @return array|null
      */
     public function get_color_palette(): ?array {
-        if ($colorpalette = optional_param('colorpalette', '', PARAM_RAW)) {
-            $colorpalette = explode(',', base64_decode($colorpalette));
-            foreach ($colorpalette as $index => $item) {
-                if (!empty($item)) {
-                    $colorpalette[$index] = explode('|', $item);
-                } else {
-                    unset($colorpalette[$index]);
-                }
-            }
+        $token = required_param('token', PARAM_ALPHANUM);
+        $data = cr_get_plot_data($token, (int) $this->report->id, 'pie');
 
-            return $colorpalette;
-        }
-
-        return null;
+        return $data['colors'] ?: null;
     }
 
     /**

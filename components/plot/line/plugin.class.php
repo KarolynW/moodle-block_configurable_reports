@@ -84,16 +84,20 @@ class plugin_line extends plugin_base {
             }
         }
 
-        $params = '';
-
+        $plotseries = [];
         $i = 0;
         foreach ($series as $h => $s) {
-            $params .= "&amp;serie$i=" . base64_encode($sname[$h] . '||' . implode(',', $s));
+            $plotseries[$i] = ['serie' => $s, 'name' => $sname[$h]];
             $i++;
         }
+        $token = cr_store_plot_data((int) $this->report->id, 'line', [
+            'series' => $plotseries,
+            'min' => $minvalue,
+            'max' => $maxvalue,
+        ]);
 
         return $CFG->wwwroot . '/blocks/configurable_reports/components/plot/line/graph.php?reportid=' . $this->report->id .
-            '&id=' . $id . $params . '&amp;min=' . $minvalue . '&amp;max=' . $maxvalue  . '&courseid='.$this->report->courseid;
+            '&id=' . $id . '&amp;token=' . $token . '&courseid=' . $this->report->courseid;
     }
 
     /**
@@ -102,18 +106,23 @@ class plugin_line extends plugin_base {
      * @return array
      */
     public function get_series(): array {
-        $series = [];
+        $token = required_param('token', PARAM_ALPHANUM);
 
-        // TODO don't use $_GET.
-        foreach ($_GET as $key => $val) {
-            if (strpos($key, 'serie') !== false) {
-                $id = (int) str_replace('serie', '', $key);
-                [$name, $values] = explode('||', base64_decode($val));
-                $series[$id] = ['serie' => explode(',', $values), 'name' => $name];
-            }
-        }
+        $data = cr_get_plot_data($token, (int) $this->report->id, 'line');
 
-        return $series;
+        return $data['series'];
+    }
+
+    /**
+     * Get the plotted value range.
+     *
+     * @return int[] Minimum and maximum values.
+     */
+    public function get_range(): array {
+        $token = required_param('token', PARAM_ALPHANUM);
+        $data = cr_get_plot_data($token, (int) $this->report->id, 'line');
+
+        return [(int) $data['min'], (int) $data['max']];
     }
 
 }

@@ -91,6 +91,30 @@ class report_sql extends report_base {
     private static function get_keywords_error(string $sql, bool $highsecurity): ?string {
         global $CFG;
 
+        // SELECT is not inherently read-only: every supported database has callable functions that sleep, read server
+        // files, open network connections, acquire locks or change server state. Block the well-known primitives even
+        // in low-security mode. This is defence in depth; managesqlreports must still only be granted to fully trusted
+        // administrators because sites can install their own side-effecting database functions.
+        $dangerousfunctions = '(?:BENCHMARK|DBLINK(?:_[A-Z_]+)?|' .
+            'DBMS_(?:BACKUP_RESTORE|JAVA|LDAP|LOCK|PIPE|SCHEDULER|SYSTEM|XMLQUERY)|' .
+            'FN_(?:DUMP_DBLOG|GET_AUDIT_FILE|TRACE_GETTABLE|XE_FILE_TARGET_READ_FILE)|' .
+            'GET_LOCK|IS_FREE_LOCK|IS_USED_LOCK|LOAD_FILE|LO_(?:CREATE|EXPORT|FROM_BYTEA|IMPORT|PUT|UNLINK)|' .
+            'NEXTVAL|OPENQUERY|OPENROWSET|' .
+            'OPENDATASOURCE|PG_(?:(?:TRY_)?ADVISORY_[A-Z_]+|BACKUP_(?:START|STOP)|CANCEL_BACKEND|' .
+            '(?:COPY|CREATE)_(?:LOGICAL|PHYSICAL)_REPLICATION_SLOT|CREATE_RESTORE_POINT|DROP_REPLICATION_SLOT|' .
+            'EXPORT_SNAPSHOT|' .
+            'FILE_(?:RENAME|UNLINK|WRITE)|IMPORT_SYSTEM_COLLATIONS|LOG_BACKEND_MEMORY_CONTEXTS|' .
+            'LOGICAL_EMIT_MESSAGE|LS_[A-Z_]+|NOTIFY|PROMOTE|READ_BINARY_FILE|READ_FILE|RELOAD_CONF|ROTATE_LOGFILE|' .
+            'REPLICATION_ORIGIN_[A-Z_]+|SLEEP(?:_FOR|_UNTIL)?|START_BACKUP|STAT_FILE|' .
+            'STAT_(?:FORCE_NEXT_FLUSH|RESET[A-Z_]*)|STOP_BACKUP|SWITCH_(?:WAL|XLOG)|TERMINATE_BACKEND|' .
+            'WAL_REPLAY_(?:PAUSE|RESUME)|XLOG_REPLAY_(?:PAUSE|RESUME))|RELEASE_(?:ALL_)?LOCKS?|' .
+            'DUMPFILE|OUTFILE|SETVAL|SET_CONFIG|SLEEP|(?:MASTER|SOURCE)_POS_WAIT|SYS_(?:EVAL|EXEC)|' .
+            'UTL_(?:FILE|HTTP|INADDR|SMTP|TCP)|' .
+            'WAIT_FOR_EXECUTED_GTID_SET|WAITFOR)';
+        if (preg_match('/\b' . $dangerousfunctions . '\b/i', $sql)) {
+            return 'notallowedwords';
+        }
+
         if ($highsecurity) {
             if (preg_match('/\b(ALTER|CREATE|DELETE|DROP|GRANT|INSERT|INTO|TRUNCATE|UPDATE|SET|VACUUM|REINDEX|DISCARD|LOCK|' .
                     'EXEC|EXECUTE|UESCAPE)\b/i', $sql)) {
@@ -334,7 +358,18 @@ class report_sql extends report_base {
      * @return mixed
      */
     public function execute_query($sql, $params = []) {
-        global $DB, $CFG;
+        global $DB, $CFG, $remotedb;
+
+        // SQL report ownership is the execution trust boundary. Revoking the capability or removing an owner from the
+        // optional allowlist must stop saved, scheduled and viewer-triggered queries, not merely prevent future edits.
+        $context = ((int) $this->config->courseid === SITEID) ? context_system::instance() :
+            context_course::instance($this->config->courseid, IGNORE_MISSING);
+        if (!$context || !block_configurable_reports_user_can_managesqlreports(
+            (int) ($this->config->ownerid ?? 0),
+            $context
+        )) {
+            throw new moodle_exception('nosqlpermissions', 'block_configurable_reports');
+        }
 
         // Imported reports do not go through the form validation, so check the query every time it runs.
         if ($error = self::get_query_security_error($sql)) {
@@ -350,14 +385,26 @@ class report_sql extends report_base {
 
         $starttime = microtime(true);
 
-        if (preg_match('/\b(INSERT|INTO|CREATE)\b/i', $sql) && !empty($CFG->block_configurable_reports_enable_sql_execution)) {
+        $querydb = $remotedb ?? $DB;
+        if (!empty($this->config->remote) && $querydb === $DB) {
+            // Never run a query intended for the reporting database against Moodle's writable database as a fallback.
+            throw new moodle_exception('remotedatabaseunavailable', 'block_configurable_reports');
+        }
+        $isremote = !empty($this->config->remote) && $querydb !== $DB;
+        $iswritequery = preg_match('/\b(INSERT|INTO|CREATE)\b/i', $sql);
+        if ($isremote && $iswritequery) {
+            // Remote reporting credentials should be read-only even if local SQL execution is deliberately enabled.
+            throw new moodle_exception('notallowedwords', 'block_configurable_reports');
+        }
+
+        if ($iswritequery && !empty($CFG->block_configurable_reports_enable_sql_execution)) {
             // Run special (dangerous) queries directly.
             $this->reportlimit = 0;
             $results = $DB->execute($sql, $params);
         } else {
             // Ask for one row more than we will show: if it comes back, the limit cut the result set short.
             $this->reportlimit = $reportlimit;
-            $results = $DB->get_recordset_sql($sql, $params, 0, $reportlimit + 1);
+            $results = $querydb->get_recordset_sql($sql, $params, 0, $reportlimit + 1);
         }
 
         // Update the execution time in the DB.

@@ -219,10 +219,102 @@ function cr_unserialize(string $data): array {
     $data = preg_replace('/THEN\+%22(.+?)%22/', 'THEN+%27${1}%27', $data);
     $data = preg_replace('/%60/', '+++', $data);
 
-    // TODO remove unserialize.
-    $data = unserialize($data, ['allowed_classes' => ['stdClass']]);
+    // This legacy format should eventually be replaced with structured data.
+    // Limit nesting as well as object types. Imported reports can supply this value, and PHP's unserializer otherwise
+    // walks arbitrarily deep structures before the component validation gets a chance to reject them.
+    $data = @unserialize($data, ['allowed_classes' => ['stdClass'], 'max_depth' => 64]);
+    if (!is_array($data) && !is_object($data)) {
+        return [];
+    }
 
     return (array) urldecode_recursive($data);
+}
+
+/**
+ * Include a report class after checking that the stored report type names an installed plugin.
+ *
+ * Report types are stored in the database and can also arrive in imported reports. Keep the validation next to the
+ * dynamic include so no caller can accidentally turn a stored value into a path.
+ *
+ * @param string $reporttype The report plugin name.
+ * @return string The report class name.
+ */
+function cr_require_report_class(string $reporttype): string {
+    global $CFG;
+
+    if (!in_array($reporttype, get_list_of_plugins('blocks/configurable_reports/reports'), true)) {
+        throw new moodle_exception('reportdoesnotexists', 'block_configurable_reports');
+    }
+
+    require_once($CFG->dirroot . '/blocks/configurable_reports/report.class.php');
+    require_once($CFG->dirroot . '/blocks/configurable_reports/reports/' . $reporttype . '/report.class.php');
+
+    $classname = 'report_' . $reporttype;
+    if (!class_exists($classname, false) || !is_subclass_of($classname, report_base::class)) {
+        throw new moodle_exception('reportdoesnotexists', 'block_configurable_reports');
+    }
+
+    return $classname;
+}
+
+/**
+ * Store chart data behind an opaque, short-lived token instead of putting report values in a URL.
+ *
+ * @param int $reportid Report id.
+ * @param string $plottype Plot plugin name.
+ * @param array $data Data needed to render the chart.
+ * @return string Opaque cache token.
+ */
+function cr_store_plot_data(int $reportid, string $plottype, array $data): string {
+    global $USER;
+
+    $token = bin2hex(random_bytes(32));
+    $cache = cache::make('block_configurable_reports', 'plotdata');
+    $cache->set($token, [
+        'reportid' => $reportid,
+        'userid' => (int) $USER->id,
+        'plottype' => $plottype,
+        'data' => $data,
+    ]);
+
+    return $token;
+}
+
+/**
+ * Retrieve chart data, ensuring the token belongs to this user, report and plot type.
+ *
+ * @param string $token Opaque cache token.
+ * @param int $reportid Report id.
+ * @param string $plottype Plot plugin name.
+ * @return array Data needed to render the chart.
+ */
+function cr_get_plot_data(string $token, int $reportid, string $plottype): array {
+    global $USER;
+
+    if (!preg_match('/^[a-f0-9]{64}$/D', $token)) {
+        throw new invalid_parameter_exception('Invalid or expired chart token');
+    }
+    $payload = cache::make('block_configurable_reports', 'plotdata')->get($token);
+    if (
+        !is_array($payload) || ($payload['reportid'] ?? 0) !== $reportid ||
+        ($payload['userid'] ?? 0) !== (int) $USER->id ||
+        !hash_equals((string) ($payload['plottype'] ?? ''), $plottype) ||
+        !is_array($payload['data'] ?? null)
+    ) {
+        throw new invalid_parameter_exception('Invalid or expired chart token');
+    }
+
+    return $payload['data'];
+}
+
+/**
+ * Make a string safe to place inside an XML CDATA section.
+ *
+ * @param string $value Raw value.
+ * @return string CDATA-safe value.
+ */
+function cr_encode_cdata(string $value): string {
+    return str_replace(']]>', ']]]]><![CDATA[>', $value);
 }
 
 /**
@@ -292,12 +384,7 @@ function cr_get_sensitive_user_columns(): array {
  * @return mixed
  */
 function cr_check_report_permissions($report, int $userid, context $context) {
-    global $CFG;
-
-    require_once($CFG->dirroot . '/blocks/configurable_reports/report.class.php');
-    require_once($CFG->dirroot . '/blocks/configurable_reports/reports/' . $report->type . '/report.class.php');
-
-    $classn = 'report_' . $report->type;
+    $classn = cr_require_report_class($report->type);
 
     return (new $classn($report->id))->check_permissions($userid, $context);
 }
@@ -670,6 +757,13 @@ function cr_make_categories_list(&$list, &$parents, $requiredcapability = '', $e
 function cr_import_xml(string $xml, object $course) {
     global $CFG, $DB, $USER;
 
+    // A normal report export is only a few kilobytes. Bound attacker-controlled XML before both the XML parser and
+    // PHP's legacy serialized component decoder allocate memory for it.
+    $maximportbytes = 1024 * 1024;
+    if (strlen($xml) > $maximportbytes) {
+        return false;
+    }
+
     if (class_exists('\core\xml_parser')) {
         $data = (new \core\xml_parser())->parse($xml, 1, 'UTF-8');
     } else {
@@ -689,7 +783,11 @@ function cr_import_xml(string $xml, object $course) {
                 continue;
             }
             if ($key === 'components') {
-                $val[0]['#'] = base64_decode(trim($val[0]['#']));
+                $decoded = base64_decode(trim($val[0]['#']), true);
+                if ($decoded === false || strlen($decoded) > $maximportbytes) {
+                    return false;
+                }
+                $val[0]['#'] = $decoded;
                 // Fix url_encode " and ' when importing SQL queries.
                 $tempcomponents = cr_unserialize($val[0]['#']);
 
@@ -725,6 +823,15 @@ function cr_import_xml(string $xml, object $course) {
         $newreport->name = clean_param($newreport->name ?? '', PARAM_TEXT);
         // Reports are visible by default, as when they are created with the form.
         $newreport->visible = $newreport->visible ?? 1;
+
+        // Remote reports can expose a separately configured database and are reserved for the same trusted users as SQL.
+        $context = ((int) $course->id === SITEID) ? context_system::instance() : context_course::instance($course->id);
+        if (
+            !empty($newreport->remote) &&
+            ($newreport->type !== 'sql' || !block_configurable_reports_can_managesqlreports($context))
+        ) {
+            $newreport->remote = 0;
+        }
 
         $newreport->courseid = $course->id;
         $newreport->ownerid = $USER->id;
@@ -876,17 +983,31 @@ function block_configurable_reports_repository_reports($listing): array {
  */
 function block_configurable_reports_can_managesqlreports($context): bool {
     global $USER;
-    if (has_capability('block/configurable_reports:managesqlreports', $context)) {
-        $allowedusers = get_config('block_configurable_reports', 'allowedsqlusers');
-        if (!empty($allowedusers)) {
-            $allowedusers = explode(',', $allowedusers);
-            if (in_array($USER->username, $allowedusers)) {
-                return true;
-            }
-        } else {
-            return true;
-        }
+
+    return block_configurable_reports_user_can_managesqlreports((int) $USER->id, $context);
+}
+
+/**
+ * Check whether a specific user is trusted to use SQL and remote-database report features.
+ *
+ * @param int $userid User id.
+ * @param context $context Report context.
+ * @return bool
+ */
+function block_configurable_reports_user_can_managesqlreports(int $userid, context $context): bool {
+    global $DB;
+
+    if (!has_capability('block/configurable_reports:managesqlreports', $context, $userid)) {
+        return false;
     }
 
-    return false;
+    $allowedusers = trim((string) get_config('block_configurable_reports', 'allowedsqlusers'));
+    if ($allowedusers === '') {
+        return true;
+    }
+
+    $username = $DB->get_field('user', 'username', ['id' => $userid]);
+    $allowedusers = array_map('trim', explode(',', $allowedusers));
+
+    return is_string($username) && in_array($username, $allowedusers, true);
 }

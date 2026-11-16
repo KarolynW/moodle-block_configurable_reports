@@ -82,9 +82,7 @@ if ($id) {
         throw new moodle_exception('nosuchcourseid', 'block_configurable_reports');
     }
 
-    require_once($CFG->dirroot . '/blocks/configurable_reports/report.class.php');
-    require_once($CFG->dirroot . '/blocks/configurable_reports/reports/' . $report->type . '/report.class.php');
-    $reportclassname = 'report_' . $report->type;
+    $reportclassname = cr_require_report_class($report->type);
     $reportclass = new $reportclassname($report->id);
     $PAGE->set_url('/blocks/configurable_reports/editreport.php', ['id' => $id]);
 } else {
@@ -187,12 +185,10 @@ if ($editform->is_cancelled()) {
     redirect($CFG->wwwroot . '/blocks/configurable_reports/editreport.php');
 
 } else if ($data = $editform->get_data()) {
-    require_once($CFG->dirroot . '/blocks/configurable_reports/report.class.php');
-    require_once($CFG->dirroot . '/blocks/configurable_reports/reports/' . $data->type . '/report.class.php');
     if (empty($report)) {
-        $reportclassname = 'report_' . $data->type;
+        $reportclassname = cr_require_report_class($data->type);
     } else {
-        $reportclassname = 'report_' . $report->type;
+        $reportclassname = cr_require_report_class($report->type);
     }
 
     $arraydata = (array) $data;
@@ -211,7 +207,8 @@ if ($editform->is_cancelled()) {
         $data->jsordering = 0;
     }
 
-    if (!isset($data->remote)) {
+    $reporttype = empty($report) ? $data->type : $report->type;
+    if ($reporttype !== 'sql' || !isset($data->remote) || !block_configurable_reports_can_managesqlreports($context)) {
         $data->remote = 0;
     }
 

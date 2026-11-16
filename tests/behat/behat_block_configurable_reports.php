@@ -26,6 +26,7 @@
 // NOTE: no MOODLE_INTERNAL test here, this file may be required by behat before including /config.php.
 
 require_once(__DIR__ . '/../../../../lib/behat/behat_base.php');
+require_once(__DIR__ . '/../../../../lib/behat/behat_field_manager.php');
 
 use Behat\Mink\Exception\ExpectationException;
 
@@ -52,7 +53,7 @@ class behat_block_configurable_reports extends behat_base {
         $query = str_replace('\\"', '"', $query);
 
         if (!$this->running_javascript()) {
-            $this->execute('behat_forms::i_set_the_field_to', ['SQL Query', $query]);
+            $this->set_form_field_value('SQL Query', $query);
             return;
         }
 
@@ -169,7 +170,22 @@ class behat_block_configurable_reports extends behat_base {
      * @param string $shortname The course short name.
      */
     public function i_set_the_field_to_the_id_of_course(string $field, string $shortname): void {
-        $this->execute('behat_forms::i_set_the_field_to', [$field, $this->get_course_id($shortname)]);
+        $this->set_form_field_value($field, (string) $this->get_course_id($shortname));
+    }
+
+    /**
+     * Set a Moodle form field without depending on another Behat context alias.
+     *
+     * Context aliases can vary with the suite configuration. Moodle's field manager is the API used by the core
+     * form steps themselves, so using it directly keeps these custom steps available in both the normal and the
+     * JavaScript suites without duplicating field-type handling.
+     *
+     * @param string $field Field label, name or id.
+     * @param string $value Value to set.
+     */
+    private function set_form_field_value(string $field, string $value): void {
+        $formfield = behat_field_manager::get_form_field_from_label($field, $this);
+        $formfield->set_value($value);
     }
 
     /**

@@ -53,10 +53,7 @@ if ((int) $courseid === SITEID) {
     require_login($course->id);
     $context = context_course::instance($course->id);
 }
-require_once($CFG->dirroot . '/blocks/configurable_reports/report.class.php');
-require_once($CFG->dirroot . '/blocks/configurable_reports/reports/' . $report->type . '/report.class.php');
-
-$reportclassname = 'report_' . $report->type;
+$reportclassname = cr_require_report_class($report->type);
 $reportclass = new $reportclassname($report);
 
 if (!$reportclass->check_permissions($USER->id, $context)) {
@@ -68,16 +65,18 @@ $graphs = $components['plot']['elements'];
 
 if (!empty($graphs)) {
     $series = [];
+    $graphfound = false;
     foreach ($graphs as $g) {
-        $classname = cr_require_component_plugin('plot', $g['pluginname']);
-        if ($g['id'] == $id) {
+        if (($g['pluginname'] ?? '') === 'bar' && ($g['id'] ?? '') == $id) {
+            $classname = cr_require_component_plugin('plot', $g['pluginname']);
             $class = new $classname($report);
             $series = $class->get_series($g['formdata']);
+            $graphfound = true;
             break;
         }
     }
 
-    if ($g['id'] == $id) {
+    if ($graphfound) {
         require_once($CFG->dirroot . "/blocks/configurable_reports/lib/pChart2/class/pDraw.php");
         require_once($CFG->dirroot . "/blocks/configurable_reports/lib/pChart2/class/pData.php");
         require_once($CFG->dirroot . "/blocks/configurable_reports/lib/pChart2/class/pColor.php");
@@ -110,8 +109,7 @@ if (!empty($graphs)) {
             $dataset->addPoints($valueset, $name);
         }
 
-        $width = property_exists($g['formdata'], "width") ? $g['formdata']->width : 900;
-        $height = property_exists($g['formdata'], "height") ? $g['formdata']->height : 500;
+        [$width, $height] = plugin_bar::normalise_dimensions($g['formdata']);
 
         $colorr = property_exists($g['formdata'], "color_r") ? $g['formdata']->color_r : 170;
         $colorg = property_exists($g['formdata'], "color_g") ? $g['formdata']->color_g : 183;

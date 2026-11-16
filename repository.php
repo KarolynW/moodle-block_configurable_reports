@@ -32,6 +32,7 @@ $context = block_configurable_reports_require_course_login();
 if (!has_any_capability(['block/configurable_reports:managereports', 'block/configurable_reports:manageownreports'], $context)) {
     throw new moodle_exception('badpermissions', 'block_configurable_reports');
 }
+require_sesskey();
 
 $action = required_param('action', PARAM_ALPHA);
 

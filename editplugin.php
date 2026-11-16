@@ -71,10 +71,7 @@ if ($report->type === 'sql' && !block_configurable_reports_can_managesqlreports(
     throw new moodle_exception('nosqlpermissions', 'block_configurable_reports');
 }
 
-require_once($CFG->dirroot . '/blocks/configurable_reports/report.class.php');
-require_once($CFG->dirroot . '/blocks/configurable_reports/reports/' . $report->type . '/report.class.php');
-
-$reportclassname = 'report_' . $report->type;
+$reportclassname = cr_require_report_class($report->type);
 $reportclass = new $reportclassname($report->id);
 
 if (!in_array($comp, $reportclass->components)) {
@@ -88,7 +85,7 @@ $PAGE->set_url('/blocks/configurable_reports/editplugin.php', ['id' => $id, 'com
 $cdata = null;
 $plugin = '';
 if (!$cid) {
-    if (filetype($CFG->dirroot . '/blocks/configurable_reports/components/' . $comp . '/' . $pname) === 'dir') {
+    if (in_array($pname, cr_get_component_plugins($comp), true)) {
         $plugin = $pname;
     }
 } else {
@@ -139,8 +136,7 @@ if (!$plugin || $plugin !== $pname) {
 }
 defined('MOODLE_INTERNAL') || die;
 require_once($CFG->dirroot . '/blocks/configurable_reports/plugin.class.php');
-require_once($CFG->dirroot . '/blocks/configurable_reports/components/' . $comp . '/' . $pname . '/plugin.class.php');
-$pluginclassname = 'plugin_' . $pname;
+$pluginclassname = cr_require_component_plugin($comp, $pname);
 $pluginclass = new $pluginclassname($report);
 
 if (isset($pluginclass->form) && $pluginclass->form) {
