@@ -180,5 +180,10 @@ function xmldb_block_configurable_reports_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2027050406, 'block', 'configurable_reports');
     }
 
+    if ($oldversion < 2027050407) {
+        // The plot-data cache definition changed, and new settings need their defaults.
+        upgrade_plugin_savepoint(true, 2027050407, 'block', 'configurable_reports');
+    }
+
     return true;
 }

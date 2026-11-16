@@ -23,6 +23,12 @@
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 
+/** Seconds that chart data remains readable after a report is viewed. */
+defined('CR_PLOT_DATA_LIFETIME') || define('CR_PLOT_DATA_LIFETIME', 3600);
+
+/** Most chart data entries kept for one user; the oldest are removed first. */
+defined('CR_PLOT_DATA_MAX_PER_USER') || define('CR_PLOT_DATA_MAX_PER_USER', 40);
+
 /**
  * cr_print_js_function
  *
@@ -270,12 +276,34 @@ function cr_store_plot_data(int $reportid, string $plottype, array $data): strin
 
     $token = bin2hex(random_bytes(32));
     $cache = cache::make('block_configurable_reports', 'plotdata');
+    $now = time();
+
+    // Keep a per-user index of live tokens so that entries are removed when they expire or when a user accumulates too
+    // many of them. Cache stores are not required to purge expired entries by themselves.
+    $indexkey = 'index_' . (int) $USER->id;
+    $index = $cache->get($indexkey);
+    $index = is_array($index) ? $index : [];
+    foreach ($index as $oldtoken => $created) {
+        if ($created < $now - CR_PLOT_DATA_LIFETIME) {
+            $cache->delete($oldtoken);
+            unset($index[$oldtoken]);
+        }
+    }
+    while (count($index) >= CR_PLOT_DATA_MAX_PER_USER) {
+        $oldest = array_key_first($index);
+        $cache->delete($oldest);
+        unset($index[$oldest]);
+    }
+
     $cache->set($token, [
         'reportid' => $reportid,
         'userid' => (int) $USER->id,
         'plottype' => $plottype,
+        'created' => $now,
         'data' => $data,
     ]);
+    $index[$token] = $now;
+    $cache->set($indexkey, $index);
 
     return $token;
 }
@@ -299,6 +327,7 @@ function cr_get_plot_data(string $token, int $reportid, string $plottype): array
         !is_array($payload) || ($payload['reportid'] ?? 0) !== $reportid ||
         ($payload['userid'] ?? 0) !== (int) $USER->id ||
         !hash_equals((string) ($payload['plottype'] ?? ''), $plottype) ||
+        (int) ($payload['created'] ?? 0) < time() - CR_PLOT_DATA_LIFETIME ||
         !is_array($payload['data'] ?? null)
     ) {
         throw new invalid_parameter_exception('Invalid or expired chart token');
@@ -1010,4 +1039,94 @@ function block_configurable_reports_user_can_managesqlreports(int $userid, conte
     $allowedusers = array_map('trim', explode(',', $allowedusers));
 
     return is_string($username) && in_array($username, $allowedusers, true);
+}
+
+/**
+ * Whether an SQL report must run on the separately configured reporting database.
+ *
+ * Reports opt in individually, and administrators can require it for every SQL report so that none of them can run
+ * with the privileges of Moodle's own database account.
+ *
+ * @param object $report Report record.
+ * @return bool
+ */
+function cr_sql_report_uses_remote(object $report): bool {
+    if (($report->type ?? '') !== 'sql') {
+        return false;
+    }
+
+    return !empty($report->remote) || (bool) get_config('block_configurable_reports', 'forceremotesql');
+}
+
+/**
+ * Limit how long the next report query may run on a connection, and return the statement that removes the limit.
+ *
+ * This is a best-effort control applied by the plugin. A limit set on the database account itself is stronger, because
+ * it does not depend on the plugin being the caller.
+ *
+ * @param object $db Database connection the query will run on.
+ * @return string|null Statement that restores the previous behaviour, or null when no limit was applied.
+ */
+function cr_apply_query_timeout(object $db): ?string {
+    $seconds = (int) get_config('block_configurable_reports', 'sqltimeout');
+    if ($seconds <= 0 || !method_exists($db, 'get_dbfamily')) {
+        return null;
+    }
+
+    $set = null;
+    $reset = null;
+    switch ($db->get_dbfamily()) {
+        case 'postgres':
+            $set = 'SET statement_timeout = ' . ($seconds * 1000);
+            $reset = 'SET statement_timeout = DEFAULT';
+            break;
+        case 'mysql':
+            $info = $db->get_server_info();
+            if (stripos((string) ($info['description'] ?? ''), 'mariadb') !== false) {
+                $set = 'SET SESSION max_statement_time = ' . $seconds;
+                $reset = 'SET SESSION max_statement_time = DEFAULT';
+            } else {
+                $set = 'SET SESSION max_execution_time = ' . ($seconds * 1000);
+                $reset = 'SET SESSION max_execution_time = DEFAULT';
+            }
+            break;
+    }
+    if ($set === null) {
+        return null;
+    }
+
+    try {
+        $db->execute($set);
+    } catch (Throwable $e) {
+        debugging('Configurable Reports could not apply the SQL time limit: ' . $e->getMessage(), DEBUG_DEVELOPER);
+        return null;
+    }
+
+    return $reset;
+}
+
+/**
+ * Make the current user the owner of a report.
+ *
+ * SQL reports only run while their owner is trusted to manage SQL, so a report whose owner has left needs a new one.
+ * Only users who manage all reports in the context can do this, and SQL reports also need the SQL capability.
+ *
+ * @param object $report Report record.
+ * @param context $context Report context.
+ * @return object The updated report record.
+ */
+function cr_take_report_ownership(object $report, context $context): object {
+    global $DB, $USER;
+
+    require_capability('block/configurable_reports:managereports', $context);
+    if ($report->type === 'sql' && !block_configurable_reports_can_managesqlreports($context)) {
+        throw new moodle_exception('nosqlpermissions', 'block_configurable_reports');
+    }
+
+    $DB->set_field('block_configurable_reports', 'ownerid', $USER->id, ['id' => $report->id]);
+    $report->ownerid = $USER->id;
+    \block_configurable_reports\event\report_updated::create_from_report($report, $context, ['ownerchanged' => true])
+        ->trigger();
+
+    return $report;
 }

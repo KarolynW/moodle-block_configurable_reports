@@ -34,6 +34,7 @@ $confirm = optional_param('confirm', 0, PARAM_BOOL);
 $show = optional_param('show', 0, PARAM_BOOL);
 $hide = optional_param('hide', 0, PARAM_BOOL);
 $duplicate = optional_param('duplicate', 0, PARAM_BOOL);
+$takeownership = optional_param('takeownership', 0, PARAM_BOOL);
 
 $report = null;
 
@@ -118,6 +119,13 @@ if (($show || $hide) && confirm_sesskey()) {
     }
     $report->visible = $visible;
     \block_configurable_reports\event\report_updated::create_from_report($report)->trigger();
+
+    header("Location: $CFG->wwwroot/blocks/configurable_reports/managereport.php?courseid=$courseid");
+    die;
+}
+
+if ($takeownership && $report && confirm_sesskey()) {
+    cr_take_report_ownership($report, $context);
 
     header("Location: $CFG->wwwroot/blocks/configurable_reports/managereport.php?courseid=$courseid");
     die;

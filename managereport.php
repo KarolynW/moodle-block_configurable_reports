@@ -132,6 +132,8 @@ if ($reports) {
     $strshow = get_string('show');
     $strcopy = get_string('duplicate');
     $strexport = get_string('exportreport', 'block_configurable_reports');
+    $strtakeownership = get_string('takeownership', 'block_configurable_reports');
+    $hasmanageall = has_capability('block/configurable_reports:managereports', $context);
     $exportformats = cr_get_export_plugins();
 
     foreach ($reports as $r) {
@@ -177,6 +179,12 @@ if ($reports) {
                 $USER->sesskey . '">' .
                 $OUTPUT->pix_icon('t/copy', $strcopy) .
                 '</a>&nbsp;&nbsp;';
+            if ($hasmanageall && $r->ownerid != $USER->id) {
+                $editcell .= '<a title="' . $strtakeownership . '" href="editreport.php?id=' . $r->id .
+                    '&amp;takeownership=1&amp;sesskey=' . $USER->sesskey . '">' .
+                    $OUTPUT->pix_icon('t/assignroles', $strtakeownership) .
+                    '</a>&nbsp;&nbsp;';
+            }
             $editcell .= '<a title="' . $strexport . '" href="export.php?id=' . $r->id . '&amp;sesskey=' . $USER->sesskey . '">' .
                 $OUTPUT->pix_icon('t/backup', $strexport) .
                 '</a>&nbsp;&nbsp;';

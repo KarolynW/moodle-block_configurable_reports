@@ -69,11 +69,32 @@ if ($ADMIN->fulltree) {
     );
 
     $settings->add(
+        new admin_setting_configcheckbox(
+            'block_configurable_reports/forceremotesql', get_string('forceremotesql', 'block_configurable_reports'),
+            get_string('forceremotesqlinfo', 'block_configurable_reports'), 0
+        )
+    );
+
+    $settings->add(
+        new admin_setting_configtext(
+            'block_configurable_reports/sqltimeout', get_string('sqltimeout', 'block_configurable_reports'),
+            get_string('sqltimeoutinfo', 'block_configurable_reports'), '0', PARAM_INT, 6
+        )
+    );
+
+    $settings->add(
+        new admin_setting_configcheckbox(
+            'block_configurable_reports/enablewebservice', get_string('enablewebservice', 'block_configurable_reports'),
+            get_string('enablewebserviceinfo', 'block_configurable_reports'), 1
+        )
+    );
+
+    $settings->add(
         new admin_setting_configtext(
             'block_configurable_reports/crrepository',
             get_string('crrepository', 'block_configurable_reports'),
             get_string('crrepositoryinfo', 'block_configurable_reports'),
-            'jleyva/moodle-configurable_reports_repository',
+            '',
             PARAM_URL,
             40
         )
@@ -84,7 +105,7 @@ if ($ADMIN->fulltree) {
             'block_configurable_reports/sharedsqlrepository',
             get_string('sharedsqlrepository', 'block_configurable_reports'),
             get_string('sharedsqlrepositoryinfo', 'block_configurable_reports'),
-            'jleyva/moodle-custom_sql_report_queries',
+            '',
             PARAM_URL,
             40
         )

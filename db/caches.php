@@ -28,6 +28,5 @@ $definitions = [
     'plotdata' => [
         'mode' => cache_store::MODE_APPLICATION,
         'simplekeys' => true,
-        'ttl' => 3600,
     ],
 ];

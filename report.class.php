@@ -140,7 +140,7 @@ abstract class report_base {
 
         if (
             !empty($remotedbhost) && !empty($remotedbname) && !empty($remotedbuser) && !empty($remotedbpass) &&
-            ($this->config->type ?? '') === 'sql' && !empty($this->config->remote)
+            cr_sql_report_uses_remote($this->config)
         ) {
             $context = ((int) $this->config->courseid === SITEID) ? context_system::instance() :
                 context_course::instance($this->config->courseid, IGNORE_MISSING);

@@ -29,7 +29,10 @@
  * @return array check
  */
 function block_configurable_reports_security_checks(): array {
-    return [new block_configurable_reports\check\sql_execution()];
+    return [
+        new block_configurable_reports\check\sql_execution(),
+        new block_configurable_reports\check\sql_configuration(),
+    ];
 }
 
 /**

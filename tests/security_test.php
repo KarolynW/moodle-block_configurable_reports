@@ -230,12 +230,12 @@ final class security_test extends advanced_testcase {
         set_config('dbuser', 'nobody', 'block_configurable_reports');
         set_config('dbpass', 'invalid', 'block_configurable_reports');
 
-        $classname = cr_require_report_class('users');
+        $classname = cr_require_report_class('sql');
         new $classname((object) [
             'id' => 1,
             'courseid' => $SITE->id,
             'ownerid' => $owner->id,
-            'type' => 'users',
+            'type' => 'sql',
             'components' => cr_serialize([]),
             'remote' => 1,
         ]);

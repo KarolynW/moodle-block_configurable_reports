@@ -386,11 +386,12 @@ class report_sql extends report_base {
         $starttime = microtime(true);
 
         $querydb = $remotedb ?? $DB;
-        if (!empty($this->config->remote) && $querydb === $DB) {
+        $wantsremote = cr_sql_report_uses_remote($this->config);
+        if ($wantsremote && $querydb === $DB) {
             // Never run a query intended for the reporting database against Moodle's writable database as a fallback.
             throw new moodle_exception('remotedatabaseunavailable', 'block_configurable_reports');
         }
-        $isremote = !empty($this->config->remote) && $querydb !== $DB;
+        $isremote = $wantsremote && $querydb !== $DB;
         $iswritequery = preg_match('/\b(INSERT|INTO|CREATE)\b/i', $sql);
         if ($isremote && $iswritequery) {
             // Remote reporting credentials should be read-only even if local SQL execution is deliberately enabled.
@@ -404,7 +405,19 @@ class report_sql extends report_base {
         } else {
             // Ask for one row more than we will show: if it comes back, the limit cut the result set short.
             $this->reportlimit = $reportlimit;
-            $results = $querydb->get_recordset_sql($sql, $params, 0, $reportlimit + 1);
+            $resettimeout = cr_apply_query_timeout($querydb);
+            try {
+                $results = $querydb->get_recordset_sql($sql, $params, 0, $reportlimit + 1);
+            } finally {
+                if ($resettimeout !== null) {
+                    try {
+                        $querydb->execute($resettimeout);
+                    } catch (Throwable $e) {
+                        debugging('Configurable Reports could not remove the SQL time limit: ' . $e->getMessage(),
+                            DEBUG_DEVELOPER);
+                    }
+                }
+            }
         }
 
         // Update the execution time in the DB.

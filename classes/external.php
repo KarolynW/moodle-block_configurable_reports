@@ -69,6 +69,12 @@ class external extends external_api {
             ['reportid' => $reportid, 'courseid' => $courseid]
         );
 
+        // Administrators can switch this entry point off. A site that has never saved the setting keeps it available.
+        $enabled = get_config('block_configurable_reports', 'enablewebservice');
+        if ($enabled !== false && empty($enabled)) {
+            throw new moodle_exception('webservicedisabled', 'block_configurable_reports');
+        }
+
         $json = [];
         $warnings = '';
         if (!$report = $DB->get_record('block_configurable_reports', ['id' => $params['reportid']])) {
