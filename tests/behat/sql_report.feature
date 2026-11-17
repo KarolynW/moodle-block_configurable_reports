@@ -5,7 +5,9 @@ Feature: Create an SQL report
   I need to create a report from a custom SQL query
 
   Background:
-    Given the following "users" exist:
+    Given the following config values are set as admin:
+      | forceremotesql | 0 | block_configurable_reports |
+    And the following "users" exist:
       | username | firstname | lastname | email                |
       | student1 | Alice     | Archer   | student1@example.com |
       | student2 | Bob       | Baker    | student2@example.com |

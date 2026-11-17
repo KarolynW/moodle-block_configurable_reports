@@ -58,6 +58,7 @@ final class security_test extends advanced_testcase {
     protected function setUp(): void {
         parent::setUp();
         $this->resetAfterTest();
+        set_config('forceremotesql', 0, 'block_configurable_reports');
     }
 
     protected function tearDown(): void {

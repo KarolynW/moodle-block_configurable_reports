@@ -5,7 +5,9 @@ Feature: Reports enforce their capability checks
   I need the report pages to check capabilities in the course the report belongs to
 
   Background:
-    Given the following "users" exist:
+    Given the following config values are set as admin:
+      | forceremotesql | 0 | block_configurable_reports |
+    And the following "users" exist:
       | username | firstname | lastname | email                |
       | managera | Mary      | Managera | managera@example.com |
       | managerb | Bob       | Managerb | managerb@example.com |

@@ -185,5 +185,14 @@ function xmldb_block_configurable_reports_upgrade($oldversion) {
         upgrade_plugin_savepoint(true, 2027050407, 'block', 'configurable_reports');
     }
 
+    if ($oldversion < 2027050408) {
+        // Use the enabled default for forced reporting-database routing unless an administrator already saved a choice.
+        if (get_config('block_configurable_reports', 'forceremotesql') === false) {
+            set_config('forceremotesql', 1, 'block_configurable_reports');
+        }
+        // The plot-data cache lifetime was restored.
+        upgrade_plugin_savepoint(true, 2027050408, 'block', 'configurable_reports');
+    }
+
     return true;
 }

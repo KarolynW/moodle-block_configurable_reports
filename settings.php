@@ -71,7 +71,7 @@ if ($ADMIN->fulltree) {
     $settings->add(
         new admin_setting_configcheckbox(
             'block_configurable_reports/forceremotesql', get_string('forceremotesql', 'block_configurable_reports'),
-            get_string('forceremotesqlinfo', 'block_configurable_reports'), 0
+            get_string('forceremotesqlinfo', 'block_configurable_reports'), 1
         )
     );
 

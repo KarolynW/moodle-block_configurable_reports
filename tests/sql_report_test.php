@@ -55,6 +55,7 @@ final class sql_report_test extends advanced_testcase {
         parent::setUp();
         $this->resetAfterTest();
         $this->setAdminUser();
+        set_config('forceremotesql', 0, 'block_configurable_reports');
 
         $this->getDataGenerator()->create_user(['username' => 'crtest1', 'city' => 'Oberhausen']);
         $this->getDataGenerator()->create_user(['username' => 'crtest2', 'city' => 'Coburg']);

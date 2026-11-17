@@ -55,6 +55,7 @@ SQL;
     protected function setUp(): void {
         parent::setUp();
         $this->resetAfterTest();
+        set_config('forceremotesql', 0, 'block_configurable_reports');
     }
 
     /**

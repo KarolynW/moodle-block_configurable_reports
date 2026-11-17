@@ -48,19 +48,34 @@ class sql_configuration extends \core\check\check {
             $problems[] = get_string('checksql_configuration_sqlsecurity', 'block_configurable_reports');
         }
 
-        if (!get_config('block_configurable_reports', 'forceremotesql')) {
+        $forceremote = get_config('block_configurable_reports', 'forceremotesql');
+        $forceremote = $forceremote === false || (bool) $forceremote;
+        if (!$forceremote) {
             $local = $DB->count_records('block_configurable_reports', ['type' => 'sql', 'remote' => 0]);
             if ($local > 0) {
                 $problems[] = get_string('checksql_configuration_local', 'block_configurable_reports', $local);
             }
         }
 
-        $notes = [];
         if (trim((string) get_config('block_configurable_reports', 'allowedsqlusers')) === '') {
-            $notes[] = get_string('checksql_configuration_allowlist', 'block_configurable_reports');
+            $problems[] = get_string('checksql_configuration_allowlist', 'block_configurable_reports');
         }
         if ((int) get_config('block_configurable_reports', 'sqltimeout') <= 0) {
-            $notes[] = get_string('checksql_configuration_timeout', 'block_configurable_reports');
+            $problems[] = get_string('checksql_configuration_timeout', 'block_configurable_reports');
+        }
+
+        $remotereports = $forceremote || $DB->record_exists('block_configurable_reports', [
+            'type' => 'sql',
+            'remote' => 1,
+        ]);
+        if ($remotereports) {
+            $remoteconfig = ['dbhost', 'dbname', 'dbuser', 'dbpass'];
+            foreach ($remoteconfig as $name) {
+                if (trim((string) get_config('block_configurable_reports', $name)) === '') {
+                    $problems[] = get_string('checksql_configuration_remote', 'block_configurable_reports');
+                    break;
+                }
+            }
         }
 
         if ($problems) {
@@ -71,8 +86,8 @@ class sql_configuration extends \core\check\check {
             $summary = get_string('checksql_configuration_ok', 'block_configurable_reports');
         }
 
-        $details = \html_writer::alist(array_map('s', array_merge($problems, $notes)));
-        if (!$problems && !$notes) {
+        $details = \html_writer::alist(array_map('s', $problems));
+        if (!$problems) {
             $details = get_string('checksql_configuration_ok', 'block_configurable_reports');
         }
 

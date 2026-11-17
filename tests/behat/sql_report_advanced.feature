@@ -5,7 +5,9 @@ Feature: Build an advanced SQL report
   I need placeholders, filters, calculations and templates in my SQL reports
 
   Background:
-    Given the following "users" exist:
+    Given the following config values are set as admin:
+      | forceremotesql | 0 | block_configurable_reports |
+    And the following "users" exist:
       | username | firstname | lastname | email                |
       | student1 | Alice     | Archer   | student1@example.com |
     And the following "courses" exist:

@@ -322,12 +322,19 @@ function cr_get_plot_data(string $token, int $reportid, string $plottype): array
     if (!preg_match('/^[a-f0-9]{64}$/D', $token)) {
         throw new invalid_parameter_exception('Invalid or expired chart token');
     }
-    $payload = cache::make('block_configurable_reports', 'plotdata')->get($token);
+    $cache = cache::make('block_configurable_reports', 'plotdata');
+    $payload = $cache->get($token);
+    $expired = is_array($payload) &&
+        (int) ($payload['created'] ?? 0) < time() - CR_PLOT_DATA_LIFETIME;
+    if ($expired) {
+        // Do not retain report data after its application-level lifetime, even if the cache store has not purged it yet.
+        $cache->delete($token);
+    }
     if (
         !is_array($payload) || ($payload['reportid'] ?? 0) !== $reportid ||
         ($payload['userid'] ?? 0) !== (int) $USER->id ||
         !hash_equals((string) ($payload['plottype'] ?? ''), $plottype) ||
-        (int) ($payload['created'] ?? 0) < time() - CR_PLOT_DATA_LIFETIME ||
+        $expired ||
         !is_array($payload['data'] ?? null)
     ) {
         throw new invalid_parameter_exception('Invalid or expired chart token');
@@ -1055,7 +1062,10 @@ function cr_sql_report_uses_remote(object $report): bool {
         return false;
     }
 
-    return !empty($report->remote) || (bool) get_config('block_configurable_reports', 'forceremotesql');
+    $forceremote = get_config('block_configurable_reports', 'forceremotesql');
+
+    // An unset value uses the administration setting's enabled default. A deliberately saved 0 remains respected.
+    return !empty($report->remote) || $forceremote === false || (bool) $forceremote;
 }
 
 /**
@@ -1069,33 +1079,43 @@ function cr_sql_report_uses_remote(object $report): bool {
  */
 function cr_apply_query_timeout(object $db): ?string {
     $seconds = (int) get_config('block_configurable_reports', 'sqltimeout');
-    if ($seconds <= 0 || !method_exists($db, 'get_dbfamily')) {
-        return null;
-    }
-
-    $set = null;
-    $reset = null;
-    switch ($db->get_dbfamily()) {
-        case 'postgres':
-            $set = 'SET statement_timeout = ' . ($seconds * 1000);
-            $reset = 'SET statement_timeout = DEFAULT';
-            break;
-        case 'mysql':
-            $info = $db->get_server_info();
-            if (stripos((string) ($info['description'] ?? ''), 'mariadb') !== false) {
-                $set = 'SET SESSION max_statement_time = ' . $seconds;
-                $reset = 'SET SESSION max_statement_time = DEFAULT';
-            } else {
-                $set = 'SET SESSION max_execution_time = ' . ($seconds * 1000);
-                $reset = 'SET SESSION max_execution_time = DEFAULT';
-            }
-            break;
-    }
-    if ($set === null) {
+    if ($seconds <= 0 || !method_exists($db, 'get_dbfamily') || !method_exists($db, 'get_field_sql')) {
         return null;
     }
 
     try {
+        switch ($db->get_dbfamily()) {
+            case 'postgres':
+                $prefix = 'SET statement_timeout = ';
+                $current = (float) $db->get_field_sql(
+                    "SELECT setting FROM pg_settings WHERE name = 'statement_timeout'"
+                );
+                $limit = $seconds * 1000;
+                break;
+            case 'mysql':
+                $info = $db->get_server_info();
+                if (stripos((string) ($info['description'] ?? ''), 'mariadb') !== false) {
+                    $prefix = 'SET SESSION max_statement_time = ';
+                    $current = (float) $db->get_field_sql('SELECT @@SESSION.max_statement_time');
+                    $limit = $seconds;
+                } else {
+                    $prefix = 'SET SESSION max_execution_time = ';
+                    $current = (float) $db->get_field_sql('SELECT @@SESSION.max_execution_time');
+                    $limit = $seconds * 1000;
+                }
+                break;
+            default:
+                return null;
+        }
+
+        // Keep an existing, stricter session limit in place.
+        if ($current > 0 && $current <= $limit) {
+            return null;
+        }
+
+        $previous = rtrim(rtrim(sprintf('%.6F', $current), '0'), '.');
+        $set = $prefix . $limit;
+        $reset = $prefix . $previous;
         $db->execute($set);
     } catch (Throwable $e) {
         debugging('Configurable Reports could not apply the SQL time limit: ' . $e->getMessage(), DEBUG_DEVELOPER);

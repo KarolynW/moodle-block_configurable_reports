@@ -90,6 +90,10 @@ final class transition_controls_test extends advanced_testcase {
 
         $this->setAdminUser();
         $record = $this->create_report();
+        unset_config('forceremotesql', 'block_configurable_reports');
+        $this->assertTrue(cr_sql_report_uses_remote($record));
+
+        set_config('forceremotesql', 0, 'block_configurable_reports');
         $this->assertFalse(cr_sql_report_uses_remote($record));
 
         set_config('forceremotesql', 1, 'block_configurable_reports');
@@ -153,6 +157,77 @@ final class transition_controls_test extends advanced_testcase {
     }
 
     /**
+     * A query timeout is removed by restoring the previous session value, and never relaxes a stricter value.
+     */
+    public function test_query_timeout_preserves_session_value(): void {
+        set_config('sqltimeout', 10, 'block_configurable_reports');
+        $db = new class('postgres', '', 30000) {
+            /** @var string[] Statements executed on the connection. */
+            public array $statements = [];
+
+            /**
+             * @param string $family Database family.
+             * @param string $description Database server description.
+             * @param float $current Current timeout in the database's native unit.
+             */
+            public function __construct(
+                public string $family,
+                public string $description,
+                public float $current
+            ) {
+            }
+
+            /** @return string */
+            public function get_dbfamily(): string {
+                return $this->family;
+            }
+
+            /** @return array */
+            public function get_server_info(): array {
+                return ['description' => $this->description];
+            }
+
+            /**
+             * @param string $sql Query used to read the session value.
+             * @return float
+             */
+            public function get_field_sql(string $sql): float {
+                return $this->current;
+            }
+
+            /** @param string $sql */
+            public function execute(string $sql): void {
+                $this->statements[] = $sql;
+            }
+        };
+
+        $reset = cr_apply_query_timeout($db);
+        $this->assertSame('SET statement_timeout = 30000', $reset);
+        $this->assertSame(['SET statement_timeout = 10000'], $db->statements);
+        $db->execute($reset);
+        $this->assertSame(['SET statement_timeout = 10000', 'SET statement_timeout = 30000'], $db->statements);
+
+        $db->current = 5000;
+        $db->statements = [];
+        $this->assertNull(cr_apply_query_timeout($db));
+        $this->assertSame([], $db->statements);
+
+        $db->family = 'mysql';
+        $db->description = 'MySQL 8.0';
+        $db->current = 30000;
+        $reset = cr_apply_query_timeout($db);
+        $this->assertSame('SET SESSION max_execution_time = 30000', $reset);
+        $this->assertSame(['SET SESSION max_execution_time = 10000'], $db->statements);
+
+        $db->description = 'MariaDB 10.11';
+        $db->current = 30;
+        $db->statements = [];
+        $reset = cr_apply_query_timeout($db);
+        $this->assertSame('SET SESSION max_statement_time = 30', $reset);
+        $this->assertSame(['SET SESSION max_statement_time = 10'], $db->statements);
+    }
+
+    /**
      * A configured time limit cancels a long query and is removed again afterwards.
      */
     public function test_query_timeout_cancels_long_query(): void {
@@ -164,6 +239,7 @@ final class transition_controls_test extends advanced_testcase {
         // A cancelled statement aborts the surrounding transaction, so this test cannot run inside one.
         $this->preventResetByRollback();
         $this->setAdminUser();
+        set_config('forceremotesql', 0, 'block_configurable_reports');
         set_config('sqltimeout', 1, 'block_configurable_reports');
         $report = new \report_sql($this->create_report());
 
@@ -269,6 +345,7 @@ final class transition_controls_test extends advanced_testcase {
         } catch (\invalid_parameter_exception $e) {
             $this->assertStringContainsString('chart token', $e->getMessage());
         }
+        $this->assertFalse($cache->get($old));
 
         // Storing more entries than the limit removes the oldest ones.
         $first = cr_store_plot_data(1, 'bar', ['a' => [1]]);
@@ -286,14 +363,32 @@ final class transition_controls_test extends advanced_testcase {
     public function test_configuration_check(): void {
         $this->setAdminUser();
         set_config('sqlsecurity', 1, 'block_configurable_reports');
+        set_config('allowedsqlusers', 'admin', 'block_configurable_reports');
+        set_config('sqltimeout', 30, 'block_configurable_reports');
         $check = new check\sql_configuration();
+
+        // Forced remote routing is the default, so incomplete connection settings are visible.
+        $this->assertSame(\core\check\result::WARNING, $check->get_result()->get_status());
+        set_config('dbhost', '127.0.0.1', 'block_configurable_reports');
+        set_config('dbname', 'reporting', 'block_configurable_reports');
+        set_config('dbuser', 'reporter', 'block_configurable_reports');
+        set_config('dbpass', 'password', 'block_configurable_reports');
         $this->assertSame(\core\check\result::OK, $check->get_result()->get_status());
 
         $this->create_report();
+        set_config('forceremotesql', 0, 'block_configurable_reports');
         $this->assertSame(\core\check\result::WARNING, $check->get_result()->get_status());
 
         set_config('forceremotesql', 1, 'block_configurable_reports');
         $this->assertSame(\core\check\result::OK, $check->get_result()->get_status());
+
+        set_config('allowedsqlusers', '', 'block_configurable_reports');
+        $this->assertSame(\core\check\result::WARNING, $check->get_result()->get_status());
+        set_config('allowedsqlusers', 'admin', 'block_configurable_reports');
+
+        set_config('sqltimeout', 0, 'block_configurable_reports');
+        $this->assertSame(\core\check\result::WARNING, $check->get_result()->get_status());
+        set_config('sqltimeout', 30, 'block_configurable_reports');
 
         set_config('sqlsecurity', 0, 'block_configurable_reports');
         $this->assertSame(\core\check\result::WARNING, $check->get_result()->get_status());

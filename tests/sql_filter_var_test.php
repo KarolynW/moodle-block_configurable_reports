@@ -178,6 +178,7 @@ final class sql_filter_var_test extends advanced_testcase {
         global $DB, $SITE, $USER;
         $this->resetAfterTest();
         $this->setAdminUser();
+        set_config('forceremotesql', 0, 'block_configurable_reports');
 
         if ($DB->get_dbfamily() !== 'postgres') {
             $this->markTestSkipped('Only PostgreSQL refuses comparing a number with text.');

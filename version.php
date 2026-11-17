@@ -27,8 +27,8 @@
 
 defined('MOODLE_INTERNAL') || die();
 
-$plugin->version = 2027050407;
+$plugin->version = 2027050408;
 $plugin->requires = 2022041900; // Requires this Moodle version, 4.0.
 $plugin->maturity = MATURITY_STABLE;
-$plugin->release = '5.3.5';
+$plugin->release = '5.3.6';
 $plugin->component = 'block_configurable_reports';
